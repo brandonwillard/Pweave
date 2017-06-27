@@ -9,29 +9,34 @@ from .base import PwebProcessorBase
 from . import subsnippets
 from IPython.core import inputsplitter
 
+try:
+    from queue import Empty  # Python 3
+except ImportError:
+    from Queue import Empty  # Python 2
+
+
 class JupyterProcessor(PwebProcessorBase):
     """Generic Jupyter processor, should work with any kernel"""
 
     def __init__(self, parsed, kernel, source, mode,
-                       figdir, outdir):
+                 figdir, outdir):
         super(JupyterProcessor, self).__init__(parsed, kernel, source, mode,
-                       figdir, outdir)
+                                               figdir, outdir)
 
         self.extra_arguments = None
         self.timeout = -1
         path = os.path.abspath(outdir)
 
         self.km, self.kc = start_new_kernel(
-            kernel_name= kernel,
+            kernel_name=kernel,
             extra_arguments=self.extra_arguments,
             stderr=open(os.devnull, 'w'),
-            cwd = path)
+            cwd=path)
         self.kc.allow_stdin = False
-
 
     def close(self):
         self.kc.stop_channels()
-        self.km.shutdown_kernel(now = True)
+        self.km.shutdown_kernel(now=True)
 
     def run_cell(self, src):
         cell = {}
@@ -48,7 +53,7 @@ class JupyterProcessor(PwebProcessorBase):
                     timeout = None
                 msg = self.kc.shell_channel.get_msg(timeout=timeout)
             except Empty:
-                #self.log.error(
+                # self.log.error(
                 #    "Timeout waiting for execute reply (%is)." % self.timeout)
                 if self.interrupt_on_timeout:
                     #self.log.error("Interrupting kernel")
@@ -92,7 +97,7 @@ class JupyterProcessor(PwebProcessorBase):
             #self.log.debug("output: %s", msg_type)
             content = msg['content']
 
-            #print(msg)
+            # print(msg)
             # set the prompt number for the input and the output
             if 'execution_count' in content:
                 cell['execution_count'] = content['execution_count']
@@ -122,12 +127,14 @@ class JupyterProcessor(PwebProcessorBase):
     def loadstring(self, code_str, **kwargs):
         return self.run_cell(code_str)
 
-    #Yes same format for compatibility even if term is not implemented
+    # Yes same format for compatibility even if term is not implemented
     def loadterm(self, code_str, **kwargs):
-        return((sources, self.run_cell(code_str)))
+        # XXX: What is `sources`; bug?
+        return((kwargs.get('sources', None),
+                self.run_cell(code_str)))
 
-    #TODO add support for "rich" output
-    #Requires storing the results for formatter
+    # TODO add support for "rich" output
+    # Requires storing the results for formatter
     def load_inline_string(self, code_string):
         from nbconvert import filters
         outputs = self.loadstring(code_string)
@@ -156,8 +163,10 @@ class IPythonProcessor(JupyterProcessor):
         self.loadstring(subsnippets.init_matplotlib)
 
     def pre_run_hook(self, chunk):
-        f_size = """matplotlib.rcParams.update({"figure.figsize" : (%i, %i)})""" % chunk["f_size"]
-        f_dpi = """matplotlib.rcParams.update({"savefig.dpi" : %i})""" % chunk["dpi"]
+        f_size = """matplotlib.rcParams.update({"figure.figsize" : (%i, %i)})""" % chunk[
+            "f_size"]
+        f_dpi = """matplotlib.rcParams.update({"savefig.dpi" : %i})""" % chunk[
+            "dpi"]
         self.loadstring("\n".join([f_size, f_dpi]))
 
     def loadterm(self, code_str, **kwargs):
@@ -173,11 +182,10 @@ class IPythonProcessor(JupyterProcessor):
                 code_str = splitter.source
                 sources.append(code_str)
                 out = self.loadstring(code_str)
-                #print(out)
+                # print(out)
                 outputs.append(out)
                 splitter.reset()
                 splitter.push_line(line)
-
 
         if splitter.source != "":
             code_str = splitter.source

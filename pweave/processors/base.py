@@ -1,21 +1,33 @@
-# Processors that execute code from code chunks
+"""
+Processors that execute code from code chunks
+"""
 import sys
 import re
 import os
 import io
 import copy
-from ..config import *
-import pickle
+
+import ast
+import shelve
+
+from ..config import rcParams
+
 
 class PwebProcessorBase(object):
-    """Processors run code from parsed Pweave documents. This is an abstract base
-    class for specific implementations"""
+    """ This is a base class that implements sequential chunk caching
+    with simple change detection.  It considers a `cache=True|False`
+    parameter per chunk.
+
+    """
 
     def __init__(self, parsed, kernel, source, docmode,
-                       figdir, outdir):
+                 figdir, outdir, always_inline=True):
+        self.kernel = kernel
         self.parsed = parsed
         self.source = source
         self.documentationmode = docmode
+        self.always_inline = always_inline
+
         self.figdir = figdir
         self.outdir = outdir
         self.executed = []
@@ -24,20 +36,16 @@ class PwebProcessorBase(object):
         self.basename = os.path.basename(os.path.abspath(source)).split(".")[0]
         self.pending_code = ""  # Used for multichunk splits
 
+        self.cachedir = os.path.join(self.cwd, rcParams["cachedir"])
+
+        if self.documentationmode:
+            self.ensureDirectoryExists(self.cachedir)
+            name = self.cachedir + "/" + self.basename + ".db"
+            self.db = shelve.open(name)
+
     def run(self):
         # Create directory for figures
         self.ensureDirectoryExists(self.getFigDirectory())
-        # Documentation mode uses results from previous  executions
-        # so that compilation is fast if you only work on doc chunks
-        if self.documentationmode:
-            success = self._getoldresults()
-            if success:
-                print("Restoring cached results")
-                return
-            else:
-                sys.stderr.write(
-                    "DOCUMENTATION MODE ERROR:\nCan't find stored results, running the code and caching results for the next documentation mode run\n")
-                rcParams["storeresults"] = True
 
         self.executed = []
 
@@ -49,14 +57,13 @@ class PwebProcessorBase(object):
             else:
                 self.executed.append(res)
 
-
         self.isexecuted = True
-        if rcParams["storeresults"]:
-            self.store(self.executed)
+
         self.close()
 
     def close(self):
-        pass
+        if self.db:
+            self.db.close()
 
     def ensureDirectoryExists(self, figdir):
         if not os.path.isdir(figdir):
@@ -66,32 +73,10 @@ class PwebProcessorBase(object):
         #flattened = list(itertools.chain.from_iterable(self.executed))
         return copy.deepcopy(self.executed)
 
-    def store(self, data):
-        """Cache the results"""
-        cachedir = os.path.join(self.cwd, rcParams["cachedir"])
-        self.ensureDirectoryExists(cachedir)
-
-        name = cachedir + "/" + self.basename + ".pkl"
-        f = open(name, 'wb')
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
-        f.close()
-
-    def restore(self):
-        """Restore results from cache"""
-        cachedir = os.path.join(self.cwd, rcParams["cachedir"])
-        name = cachedir + "/" + self.basename + ".pkl"
-
-        if os.path.exists(name):
-            f = open(name, 'rb')
-            self._oldresults = pickle.load(f)
-            f.close()
-            return True
-        else:
-            return False
-
-    def _runcode(self, chunk):
-        """Execute code from a code chunk based on options"""
-        if chunk['type'] != 'doc' and chunk['type'] != 'code':
+    def _runcode(self, chunk, session=None):
+        """Execute code from a code chunk based on options
+        """
+        if chunk['type'] not in ['doc', 'code']:
             return chunk
 
         # Add defaultoptions to parsed options
@@ -105,16 +90,18 @@ class PwebProcessorBase(object):
             chunk["options"] = defaults
             #del chunk['options']
 
-            # Read the content from file or object
+        # Read the content from file or object
         if 'source' in chunk:
             source = chunk["source"]
             if os.path.isfile(source):
-                chunk["content"] = "\n" + io.open(source, "r", encoding='utf-8').read().rstrip() + "\n" + chunk[
-                    'content']
+                file_source = io.open(source, "r",
+                                      encoding='utf-8').read().rstrip()
+                chunk["content"] = "\n" + file_source + "\n" + chunk['content']
             else:
                 chunk_text = chunk["content"]  # Get the text from chunk
+                # Get the module source using inspect
                 module_text = self.loadstring(
-                    "import inspect\nprint(inspect.getsource(%s))" % source)  # Get the module source using inspect
+                    "import inspect\nprint(inspect.getsource(%s))" % source)
                 chunk["content"] = module_text.rstrip()
                 if chunk_text.strip() != "":
                     chunk["content"] += "\n" + chunk_text
@@ -123,9 +110,11 @@ class PwebProcessorBase(object):
             chunk['content'] = self.loadinline(chunk['content'])
             return chunk
 
-
         if chunk['type'] == 'code':
-            sys.stdout.write("Processing chunk %(number)s named %(name)s from line %(start_line)s\n" % chunk)
+
+            sys.stdout.write(
+                "Processing chunk %(number)s named %(name)s from line %(start_line)s\n" %
+                chunk)
 
             old_content = None
             if not chunk["complete"]:
@@ -134,7 +123,8 @@ class PwebProcessorBase(object):
                 return chunk
             elif self.pending_code != "":
                 old_content = chunk["content"]
-                chunk["content"] = self.pending_code + old_content  # Code from all pending chunks for running the code
+                # Code from all pending chunks for running the code
+                chunk["content"] = self.pending_code + old_content
                 self.pending_code = ""
 
             if not chunk['evaluate']:
@@ -143,37 +133,126 @@ class PwebProcessorBase(object):
 
             self.pre_run_hook(chunk)
 
-            if chunk['term']:
-                # Running in term mode can return a list of chunks
-                chunks = []
-                sources, results = self.loadterm(chunk['content'], chunk=chunk)
-                n = len(sources)
-                content = ""
-                for i in range(n):
-                    if len(results[i]) == 0:
-                        content += sources[i]
-                    else:
-                        new_chunk = chunk.copy()
-                        new_chunk["content"] = content + sources[i].rstrip()
-                        content = ""
-                        new_chunk["result"] = results[i]
-                        chunks.append(new_chunk)
-                return(chunks)
+            if chunk['options'].get('cache', False) or\
+                    rcParams['storeresults']:
+                results = self._get_cached(chunk, self._term_wrap_chunks)
             else:
-                chunk['result'] = self.loadstring(chunk['content'], chunk=chunk)
+                results = self._term_wrap_chunks(chunk)
 
+            if len(results) > 1:
+                return(results)
+            else:
+                chunk, = results
 
-        #After executing the code save the figure
+        # After executing the code save the figure
         if chunk['fig']:
             chunk['figure'] = self.savefigs(chunk)
 
         if old_content is not None:
-            chunk['content'] = old_content  # The code from current chunk for display
+            # The code from current chunk for display
+            chunk['content'] = old_content
 
         self.post_run_hook(chunk)
 
-
         return chunk
+
+    def _get_cached(self, chunk, func):
+        """ Check the cache for a chunk entry, compare the code in each,
+        invalidate all chunks that follow when not equal.
+
+        TODO: Determine, and use, dependency between chunks; only
+        invalidate dependent chunks.
+        TODO: Consider using a binary diff (e.g.
+        https://pypi.python.org/pypi/bsdiff4/1.1.4).
+        """
+
+        chunk_id = str(chunk['number'])
+        chunk_data = self.db.get(chunk_id, None)
+        invalidate = False
+        chunk_res = None
+
+        this_ast_obj = ast.parse(chunk['content'])
+        if chunk_data is None:
+            # Using AST form for better syntax comparison (and the potential
+            # for chunk dependency evaluation).
+            chunk_data = {}
+            chunk_data['ast_obj'] = this_ast_obj
+
+            invalidate = True
+        else:
+            chunk_res = chunk_data.get('results', None)
+            prev_ast_obj = chunk_data.get('ast_obj', None)
+
+            # TODO: More efficient comparison?
+            if chunk_res is None or\
+                    ast.dump(this_ast_obj) != ast.dump(prev_ast_obj):
+                chunk_data = {'ast_obj': this_ast_obj}
+                invalidate = True
+
+        if chunk_res is None:
+            chunk_res = func(chunk)
+            chunk_data['results'] = chunk_res
+
+            # XXX TODO: Snapshot current session state.
+            import ipdb
+            ipdb.set_trace()  # XXX BREAKPOINT
+
+            self.session_file = getattr(self, 'session_file',
+                                        'chunk-{}'.format(chunk_id))
+            chunk_data['session_filename'] = self.session_file
+            self.loadstring("""
+            import dill
+            session_pickler = dill.dump_session({})
+            """.format(self.session_file))
+
+        else:
+            chunk_res = chunk_data['results']
+
+            # XXX TODO: Load previous session state snapshot.
+            import ipdb
+            ipdb.set_trace()  # XXX BREAKPOINT
+
+            self.loadstring("""
+            import dill
+            session_unpickler = dill.load_session({})
+            """.format(chunk_data['session_filename']))
+
+        if invalidate:
+            for k in self.db.keys():
+                if int(k) > chunk_id:
+                    self.db.pop(k, None)
+
+            self.db[chunk_id] = chunk_data
+
+        return chunk_res
+
+    def _term_wrap_chunks(self, chunk):
+        """
+        XXX: The methods `loadterm` and `loadstring` are odd abstractions.
+        Unless I'm missing something here this situation looks like it needs
+        a `process / load_chunk`, then some multi-chunk logic wrapping that.
+        """
+        if chunk['term']:
+            # Running in term mode can return a list of chunks
+            chunks = []
+            sources, results = self.loadterm(chunk['content'], chunk=chunk)
+            n = len(sources)
+            content = ""
+            for i in range(n):
+                if len(results[i]) == 0:
+                    content += sources[i]
+                else:
+                    new_chunk = chunk.copy()
+                    new_chunk["content"] = content + sources[i].rstrip()
+                    content = ""
+                    new_chunk["result"] = results[i]
+                    chunks.append(new_chunk)
+        else:
+            chunk['result'] = self.loadstring(
+                chunk['content'], chunk=chunk)
+            chunks = [chunk]
+
+        return chunks
 
     def post_run_hook(self, chunk):
         pass
@@ -189,28 +268,6 @@ class PwebProcessorBase(object):
 
     def getFigDirectory(self):
         return os.path.join(self.outdir, self.figdir)
-
-    def _getoldresults(self):
-        """Get the results of previous run for documentation mode"""
-
-        success = self.restore()
-        if not success:
-            return False
-
-        executed = []
-
-        n = len(self.parsed)
-
-        for i in range(n):
-            chunk = self.parsed[i]
-            if chunk['type'] != "code":
-                executed.append(self._hideinline(chunk.copy()))
-            else:
-                chunks = [c for c in self._oldresults if c["number"] == i and c["type"] == "code"]
-                executed = executed + chunks
-
-        self.executed = executed
-        return True
 
     def load_shell(self, chunk):
         pass
@@ -257,22 +314,3 @@ class PwebProcessorBase(object):
         splitted = re.split('<%[\w\s\W]*?%>', chunk['content'])
         chunk['content'] = ''.join(splitted)
         return chunk
-
-
-
-class ProtectStdStreams(object):
-    def __init__(self, obj=None):
-        self.__obj = obj
-
-    def __enter__(self):
-        self.__stdout = sys.stdout
-        self.__stderr = sys.stderr
-        self.__stdin = sys.stdin
-        self.__displayhook = sys.displayhook
-        return self.__obj
-
-    def __exit__(self, type, value, traceback):
-        sys.stdout = self.__stdout
-        sys.stderr = self.__stderr
-        sys.stdin = self.__stdin
-        sys.displayhook = self.__displayhook

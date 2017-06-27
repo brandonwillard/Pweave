@@ -20,6 +20,7 @@ def read_file_or_url(source):
 
     return contents
 
+
 class PwebReader(object):
     """Reads and parses Pweb documents"""
 
@@ -41,7 +42,8 @@ class PwebReader(object):
         return copy.deepcopy(self.parsed)
 
     def count_emptylines(self, line):
-        """Counts empty lines for parser, the result is stored in self.n_emptylines"""
+        """ Counts empty lines for parser, the result is stored in self.n_emptylines
+        """
         if line.strip() == "":
             self.n_emptylines += 1
         else:
@@ -76,7 +78,8 @@ class PwebReader(object):
             if code_starts and self.state != "code":
                 self.state = "code"
                 opts = self.getoptions(line)
-                chunks.append({"type": "doc", "content": read, "number": docN, "start_line": self.lineNo})
+                chunks.append({"type": "doc", "content": read,
+                               "number": docN, "start_line": self.lineNo})
                 docN += 1
                 read = ""
                 if skip:
@@ -85,8 +88,9 @@ class PwebReader(object):
             (doc_starts, skip) = self.docstart(line)
             if doc_starts and self.state == "code":
                 self.state = "doc"
-                if read.strip() != "" or 'source' in opts:  # Don't parse empty chunks unless source is specified
-                    chunks.append({"type": "code", "content": "\n" + read.rstrip(),
+                if read.strip() != "" or 'source' in opts:
+                    # Don't parse empty chunks unless source is specified
+                    chunks.append({"type": "code", "content": read.rstrip(),
                                    "number": codeN, "options": opts, "start_line": self.lineNo})
                 codeN += 1
                 read = ""
@@ -99,7 +103,6 @@ class PwebReader(object):
 
             read += line + "\n"
             self.count_emptylines(line)
-
 
         # Handle the last chunk
         if self.state == "code":
@@ -134,6 +137,7 @@ class PwebReader(object):
             chunkoptions['name'] = chunkoptions['label']
 
         return chunkoptions
+
 
 class PwebMarkdownReader(PwebReader):
 
@@ -186,39 +190,42 @@ class PwebScriptReader(object):
 
         for line in lines:
             self.lineNo += 1
-            if re.match(self.doc_line, line) and not re.match(self.opt_line, line):
-                #line = line.replace("#' ", "", 1) #Need to fix with general!
+            if re.match(self.doc_line, line) and not re.match(
+                    self.opt_line, line):
+                # line = line.replace("#' ", "", 1) #Need to fix with general!
                 line = re.sub(self.doc_start, "", line, 1)
                 if line.startswith(" "):
                     line = line.replace(" ", "", 1)
-                if self.state == "code"  and read.strip() != "":
+                if self.state == "code" and read.strip() != "":
                     chunks.append({"type": "code", "content": "\n" + read.rstrip(),
-                                       "number": codeN, "options": opts, "start_line": start_line})
-                    codeN +=1
+                                   "number": codeN, "options": opts, "start_line": start_line})
+                    codeN += 1
                     read = ""
                     start_line = self.lineNo
                 self.state = "doc"
             elif re.match(self.opt_line, line):
                 start_line = self.lineNo
-                if self.state == "code" and read.strip() !="":
+                if self.state == "code" and read.strip() != "":
                     chunks.append({"type": "code", "content": "\n" + read.rstrip(),
-                                       "number": codeN, "options": opts, "start_line": start_line})
+                                   "number": codeN, "options": opts, "start_line": start_line})
                     read = ""
-                    codeN +=1
-                if self.state == "doc" and read.strip() !="":
+                    codeN += 1
+                if self.state == "doc" and read.strip() != "":
                     if docN > 1:
-                        read = "\n" + read # Add whitespace to doc chunk. Needed for markdown output
-                    chunks.append({"type": "doc", "content": read, "number": docN, "start_line": start_line})
+                        read = "\n" + read  # Add whitespace to doc chunk. Needed for markdown output
+                    chunks.append({"type": "doc", "content": read,
+                                   "number": docN, "start_line": start_line})
                     read = ""
-                    docN +=1
+                    docN += 1
                 opts = self.getoptions(line)
                 self.state = "code"
                 continue
             elif self.state == "doc" and line.strip() != "" and read.strip() != "":
                 self.state = "code"
                 if docN > 1:
-                    read = "\n" + read # Add whitespace to doc chunk. Needed for markdown output
-                chunks.append({"type": "doc", "content": read, "number": docN, "start_line": start_line})
+                    read = "\n" + read  # Add whitespace to doc chunk. Needed for markdown output
+                chunks.append({"type": "doc", "content": read,
+                               "number": docN, "start_line": start_line})
                 opts = {"option_string": ""}
                 start_line = self.lineNo
                 read = ""
@@ -232,7 +239,8 @@ class PwebScriptReader(object):
             chunks.append({"type": "code", "content": "\n" + read.rstrip(),
                            "number": codeN, "options": opts, "start_line": start_line})
         if self.state == "doc":
-            chunks.append({"type": "doc", "content": read, "number": docN, "start_line": start_line})
+            chunks.append({"type": "doc", "content": read,
+                           "number": docN, "start_line": start_line})
         self.parsed = chunks
 
     def getoptions(self, line):
@@ -241,7 +249,7 @@ class PwebScriptReader(object):
         TRUE = True
         # Parse options from chunk to a dictionary
         optstring = re.sub(self.opt_start, "", line, 1)
-        #optstring = opt.replace('#+', '', 1).strip()
+        # optstring = opt.replace('#+', '', 1).strip()
         if optstring == "":
             return {"option_string": ""}
         # First option can be a name/label
@@ -260,6 +268,7 @@ class PwebScriptReader(object):
             chunkoptions['name'] = chunkoptions['label']
 
         return chunkoptions
+
 
 class PwebNBReader(object):
     """Read IPython notebooks"""
@@ -335,7 +344,8 @@ class PwebReaders(object):
     def getformats(cls):
         fmtstring = ""
         for format in sorted(cls.formats):
-            fmtstring += "* %s:\n   %s\n" % (format, cls.formats[format]['description'])
+            fmtstring += "* %s:\n   %s\n" % (format,
+                                             cls.formats[format]['description'])
         return fmtstring
 
     @classmethod
@@ -348,7 +358,8 @@ class PwebReaders(object):
 class PwebConvert(object):
     """Convert from one input format to another"""
 
-    def __init__(self, file=None, informat="script", outformat="noweb", pandoc_args=None):
+    def __init__(self, file=None, informat="script",
+                 outformat="noweb", pandoc_args=None):
         self.informat = informat
         self.outformat = outformat
 
@@ -364,9 +375,14 @@ class PwebConvert(object):
     def format_docchunk(self, content):
         """Format doc chunks for output"""
         if self.pandoc_args is not None:
-            pandoc = Popen(["pandoc"] + self.pandoc_args.split(), stdin=PIPE, stdout=PIPE)
+            pandoc = Popen(
+                ["pandoc"] +
+                self.pandoc_args.split(),
+                stdin=PIPE,
+                stdout=PIPE)
             pandoc.stdin.write(content.encode("utf-8"))
-            content = (pandoc.communicate()[0]).decode("utf-8").replace("\r", "") + "\n"
+            content = (pandoc.communicate()[0]).decode(
+                "utf-8").replace("\r", "") + "\n"
 
         if self.outformat == "noweb":
             return content
@@ -407,7 +423,8 @@ class PwebConvert(object):
 class PwebNBConvert(object):
     """Convert to IPython Notebook"""
 
-    def __init__(self, file=None, informat="script", outformat="noweb", pandoc_args=None):
+    def __init__(self, file=None, informat="script",
+                 outformat="noweb", pandoc_args=None):
         self.informat = informat
         self.outformat = outformat
         self.ext = '.ipynb'
@@ -447,7 +464,7 @@ class PwebNBConvert(object):
                                              new_code_cell, new_text_cell,
                                              writes_json)
 
-        except ImportError: # The `IPython.nbformat` package has been deprecated
+        except ImportError:  # The `IPython.nbformat` package has been deprecated
             from nbformat.v3 import (new_notebook, new_worksheet,
                                      new_code_cell, new_text_cell,
                                      writes_json)
@@ -497,7 +514,8 @@ class PwebConverters(object):
     def getformats(cls):
         fmtstring = ""
         for format in sorted(cls.formats):
-            fmtstring += "* %s:\n   %s\n" % (format, cls.formats[format]['description'])
+            fmtstring += "* %s:\n   %s\n" % (format,
+                                             cls.formats[format]['description'])
         return fmtstring
 
     @classmethod
