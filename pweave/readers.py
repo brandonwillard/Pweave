@@ -25,8 +25,9 @@ class PwebReader(object):
     """Reads and parses Pweb documents"""
 
     # regex that matches beginning of code block
-    code_begin = r"^<<(.*?)>>=\s*$"
-    doc_begin = r"^@$"
+    code_begin = r"^\s*?<<(.*?)>>=\s*$"
+    doc_begin = r"^\s*?@\s*$"
+    code_inline = r"<%(=?)(.*?)%>"
 
     def __init__(self, file=None, string=None):
         self.source = file
@@ -36,7 +37,8 @@ class PwebReader(object):
             self.rawtext = read_file_or_url(self.source)
         else:
             self.rawtext = string
-        self.state = "doc"  # Initial state of document
+
+        self.state = "doc"
 
     def getparsed(self):
         return copy.deepcopy(self.parsed)
@@ -78,24 +80,62 @@ class PwebReader(object):
             if code_starts and self.state != "code":
                 self.state = "code"
                 opts = self.getoptions(line)
-                chunks.append({"type": "doc", "content": read,
-                               "number": docN, "start_line": self.lineNo})
+                chunks.append({"type": "doc",
+                               "source": read,
+                               "number": docN,
+                               "options": {},
+                               "start_line": self.lineNo})
                 docN += 1
                 read = ""
                 if skip:
-                    continue  # Don't append options code
+                    continue
 
             (doc_starts, skip) = self.docstart(line)
             if doc_starts and self.state == "code":
                 self.state = "doc"
                 if read.strip() != "" or 'source' in opts:
                     # Don't parse empty chunks unless source is specified
-                    chunks.append({"type": "code", "content": read.rstrip(),
-                                   "number": codeN, "options": opts, "start_line": self.lineNo})
+                    chunks.append({"type": "code",
+                                   "source": read.rstrip(),
+                                   "number": codeN,
+                                   "options": opts,
+                                   "start_line": self.lineNo})
                 codeN += 1
                 read = ""
                 if skip:
                     continue
+
+            # Handle inline "chunks".
+            if self.state != "code" and self.code_inline is not None:
+                try:
+                    (cur_doc_str, chunk_opt, chunk_code, new_doc_str) = re.split(
+                        self.code_inline, line)
+
+                    # Close out previous doc content.
+                    if self.state == "doc":
+                        read += cur_doc_str
+                        chunks.append({"type": "doc",
+                                       "source": read,
+                                       "number": docN,
+                                       "options": {},
+                                       "start_line": self.lineNo})
+                        docN += 1
+                        read = ""
+
+                    # Add code chunk for the inline.
+                    chunks.append({"type": "code",
+                                   "inline": True,
+                                   "source": chunk_code,
+                                   "number": codeN,
+                                   "options": {
+                                       "print": True if chunk_opt == '=' else False
+                                   },
+                                   "start_line": self.lineNo})
+                    codeN += 1
+                    self.state = 'doc'
+                    line = new_doc_str
+                except ValueError:
+                    pass
 
             if self.state == "doc":
                 if hasattr(self, "strip_comments"):
@@ -106,17 +146,22 @@ class PwebReader(object):
 
         # Handle the last chunk
         if self.state == "code":
-            chunks.append({"type": "code", "content": "\n" + read.rstrip(),
-                           "number": codeN, "options": opts, "start_line": self.lineNo})
+            chunks.append({"type": "code",
+                           # TODO: Should this newline really be here?
+                           "source": "\n" + read.rstrip(),
+                           "number": codeN,
+                           "options": opts,
+                           "start_line": self.lineNo})
         if self.state == "doc":
-            chunks.append({"type": "doc", "content": read, "number": docN})
+            chunks.append({"type": "doc",
+                           "source": read,
+                           "number": docN,
+                           "options": {},
+                           "start_line": self.lineNo
+                           })
         self.parsed = chunks
 
     def getoptions(self, line):
-        # Aliases for False and True to conform with Sweave syntax
-        FALSE = False
-        TRUE = True
-
         # Parse options from chunk to a dictionary
         #optstring = opt.replace('<<', '').replace('>>=', '').strip()
         optstring = re.findall(self.code_begin, line)[0]
@@ -197,35 +242,55 @@ class PwebScriptReader(object):
                 if line.startswith(" "):
                     line = line.replace(" ", "", 1)
                 if self.state == "code" and read.strip() != "":
-                    chunks.append({"type": "code", "content": "\n" + read.rstrip(),
-                                   "number": codeN, "options": opts, "start_line": start_line})
+                    chunks.append({"type": "code",
+                                   "source": "\n" + read.rstrip(),
+                                   "number": codeN,
+                                   "options": opts,
+                                   "start_line": start_line})
                     codeN += 1
                     read = ""
                     start_line = self.lineNo
                 self.state = "doc"
+
             elif re.match(self.opt_line, line):
+
                 start_line = self.lineNo
+
                 if self.state == "code" and read.strip() != "":
-                    chunks.append({"type": "code", "content": "\n" + read.rstrip(),
-                                   "number": codeN, "options": opts, "start_line": start_line})
+                    chunks.append({"type": "code",
+                                   "source": "\n" + read.rstrip(),
+                                   "number": codeN,
+                                   "options": opts,
+                                   "start_line": start_line})
                     read = ""
                     codeN += 1
+
                 if self.state == "doc" and read.strip() != "":
-                    if docN > 1:
-                        read = "\n" + read  # Add whitespace to doc chunk. Needed for markdown output
-                    chunks.append({"type": "doc", "content": read,
-                                   "number": docN, "start_line": start_line})
+                    # Add whitespace to doc chunk. Needed for markdown output
+                    if docN > 1 and self.doc_whitespace:
+                        read = "\n" + read
+
+                    chunks.append({"type": "doc",
+                                   "source": read,
+                                   "number": docN,
+                                   "options": {},
+                                   "start_line": start_line})
                     read = ""
                     docN += 1
+
                 opts = self.getoptions(line)
                 self.state = "code"
                 continue
+
             elif self.state == "doc" and line.strip() != "" and read.strip() != "":
                 self.state = "code"
                 if docN > 1:
                     read = "\n" + read  # Add whitespace to doc chunk. Needed for markdown output
-                chunks.append({"type": "doc", "content": read,
-                               "number": docN, "start_line": start_line})
+                chunks.append({"type": "doc",
+                               "source": read,
+                               "number": docN,
+                               "options": {},
+                               "start_line": start_line})
                 opts = {"option_string": ""}
                 start_line = self.lineNo
                 read = ""
@@ -236,22 +301,27 @@ class PwebScriptReader(object):
 
         # Handle the last chunk
         if self.state == "code":
-            chunks.append({"type": "code", "content": "\n" + read.rstrip(),
-                           "number": codeN, "options": opts, "start_line": start_line})
+            chunks.append({"type": "code",
+                           "source": "\n" + read.rstrip(),
+                           "number": codeN,
+                           "options": opts,
+                           "start_line": start_line})
         if self.state == "doc":
-            chunks.append({"type": "doc", "content": read,
-                           "number": docN, "start_line": start_line})
+            chunks.append({"type": "doc",
+                           "source": read,
+                           "number": docN,
+                           "options": {},
+                           "start_line": start_line})
         self.parsed = chunks
 
     def getoptions(self, line):
-        # Aliases for False and True to conform with Sweave syntax
-        FALSE = False
-        TRUE = True
         # Parse options from chunk to a dictionary
         optstring = re.sub(self.opt_start, "", line, 1)
         # optstring = opt.replace('#+', '', 1).strip()
+        #
         if optstring == "":
             return {"option_string": ""}
+
         # First option can be a name/label
         if optstring.split(',')[0].find('=') == -1:
             splitted = optstring.split(',')
@@ -286,11 +356,17 @@ class PwebNBReader(object):
         for cell in doc:
             if cell['cell_type'] == "code":
                 self.parsed.append(
-                    {'type': "code", "content": "\n" + "".join(cell['input']), "options": {}, "number": codeN})
+                    {'type': "code",
+                     "source": "\n" + "".join(cell['input']),
+                     "options": {},
+                     "number": codeN})
                 codeN += 1
             else:
                 self.parsed.append(
-                    {'type': "doc", "content": "\n" + "".join(cell['source']), "options": {}, "number": docN})
+                    {'type': "doc",
+                     "source": "\n" + "".join(cell['source']),
+                     "options": {},
+                     "number": docN})
                 docN += 1
 
     def getparsed(self):
@@ -412,10 +488,10 @@ class PwebConvert(object):
 
         for chunk in self.doc.parsed:
             if chunk["type"] == "doc":
-                output.append(self.format_docchunk(chunk["content"]))
+                output.append(self.format_docchunk(chunk["source"]))
             if chunk["type"] == "code":
                 optstring = chunk["options"]["option_string"]
-                output.append(code % (optstring, chunk["content"]))
+                output.append(code % (optstring, chunk["source"]))
 
         self.converted = "\n".join(output)
 
@@ -476,11 +552,11 @@ class PwebNBConvert(object):
                 # TODO: this relies on pandoc converting into
                 # markdown
                 fmt = u'markdown'
-                doc = self.format_docchunk(chunk['content'])
+                doc = self.format_docchunk(chunk['source'])
                 ws.cells.append(new_text_cell(fmt, source=doc))
             if chunk["type"] == "code":
                 lang = u'python'
-                code = chunk['content']
+                code = chunk['source']
                 ws.cells.append(new_code_cell(input=code, language=lang))
 
         NB = new_notebook(name='Pweaved ipython notebook',

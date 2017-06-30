@@ -8,11 +8,12 @@ from nbconvert import filters
 class PwebFormatter(object):
     """Base class for all not-notebook formatters"""
 
-    def __init__(self, executed, *, kernel = "python3", language = "python",
-                 mimetype = None, source = None, theme = None,
-                 figdir = "figures", wd = "."):
+    def __init__(self, executed, *args,
+                 kernel="python3", language="python",
+                 mimetype=None, source=None, theme=None,
+                 figdir="figures", wd="."):
 
-        self.mimetypes = [] #other supported mimetypes than text/plain
+        self.mimetypes = [] # Other supported mimetypes than text/plain
         self.executed = executed
         self.figdir = figdir
         self.wd = wd
@@ -20,7 +21,7 @@ class PwebFormatter(object):
         self.theme = theme
         self.language = language
 
-        #To be set in child classess
+        # To be set in child classess
         self.file_ext = None
         self.header = None
         self.footer = None
@@ -51,7 +52,7 @@ class PwebFormatter(object):
             # Wrap text if option is set
             if chunk['type'] == "code":
                 if chunk["wrap"] is True or chunk['wrap'] == "code":
-                    chunk['content'] = self._wrap(chunk['content'])
+                    chunk['source'] = self._wrap(chunk['source'])
 
 
 
@@ -63,7 +64,7 @@ class PwebFormatter(object):
             elif chunk['type'] == "code":
                 self.formatted.append(self.format_codechunks(chunk))
             else:
-                self.formatted.append(chunk["content"])
+                self.formatted.append(chunk["source"])
 
         self.formatted = "\n".join(self.formatted)
         self.convert()  # Convert to e.g. markdown
@@ -192,15 +193,15 @@ class PwebFormatter(object):
         return(text)
 
     def format_codechunks(self, chunk):
-        chunk['content'] = self._indent(chunk['content'])
+        chunk['source'] = self._indent(chunk['source'])
 
         # Code is not executed
         if not chunk['evaluate']:
-            chunk["content"] = self.fix_linefeeds(chunk["content"])
+            chunk["source"] = self.fix_linefeeds(chunk["source"])
             if "%s" in chunk["codestart"]:
                 chunk["codestart"] = chunk["codestart"] % self.language
             if chunk['echo']:
-                result = '%(codestart)s%(content)s%(codeend)s' % chunk
+                result = '%(codestart)s%(source)s%(codeend)s' % chunk
                 return result
             else:
                 return ''
@@ -213,8 +214,8 @@ class PwebFormatter(object):
         result = ""
 
         if chunk['echo']:
-            chunk["content"] = self.fix_linefeeds(chunk["content"])
-            result += '%(codestart)s%(content)s%(codeend)s' % chunk
+            chunk["source"] = self.fix_linefeeds(chunk["source"])
+            result += '%(codestart)s%(source)s%(codeend)s' % chunk
 
 
         if chunk['results'] != 'hidden':
@@ -230,7 +231,7 @@ class PwebFormatter(object):
         return result
 
     def format_docchunk(self, chunk):
-        return chunk['content']
+        return chunk['source']
 
     def add_header(self):
         """Can be used to add header to self.formatted list"""

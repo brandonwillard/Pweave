@@ -2,6 +2,7 @@
 # Matti Pastell 2010-2016
 # http://mpastell.com/pweave
 
+import logging
 
 from . import readers
 from .pweb import *
@@ -10,6 +11,7 @@ from .readers import *
 from .processors import *
 from .config import *
 
+logging.basicConfig(level=logging.INFO)
 
 __version__ = '0.30-alpha1'
 

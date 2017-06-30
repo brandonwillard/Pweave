@@ -93,7 +93,7 @@ class PwebTexPygmentsFormatter(PwebTexFormatter):
         #from pygments.lexers import PythonLexer, TextLexer, PythonConsoleLexer
         from pygments.formatters import LatexFormatter
 
-        chunk['content'] = highlight(chunk['content'], IPyLexer(),
+        chunk['source'] = highlight(chunk['source'], IPyLexer(),
                                      LatexFormatter(verboptions="frame=single,fontsize=\small, xleftmargin=0.5em"))
         return PwebFormatter.format_codechunks(self, chunk)
 
