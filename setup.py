@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 from setuptools import setup
 import os
 import pweave
@@ -6,6 +5,7 @@ import pweave
 
 def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
+
 
 setup(name='Pweave',
       entry_points={
@@ -17,25 +17,26 @@ setup(name='Pweave',
                'pypublish = pweave.scripts:publish',
                'pweave-convert = pweave.scripts:convert'
                ]},
-      version = pweave.__version__,
+      version=pweave.__version__,
       description='Scientific reports with embedded python computations with reST, LaTeX or markdown',
       author='Matti Pastell',
       author_email='matti.pastell@helsinki.fi',
       url='http://mpastell.com/pweave',
-      packages=['pweave', 'pweave.themes', 'pweave.formatters', 'pweave.processors'],
+      packages=['pweave', 'pweave.themes',
+                'pweave.formatters', 'pweave.processors'],
       license='LICENSE.txt',
-      long_description = read('README.rst'),
+      long_description=read('README.rst'),
+      setup_requires=['pytest-runner', ],
+      tests_requires=['pytest', ],
       classifiers=[
-        'Development Status :: 5 - Production/Stable',
-        'Topic :: Text Processing :: Markup',
-        'Intended Audience :: Science/Research',
-        'Topic :: Scientific/Engineering',
-        'Topic :: Software Development :: Documentation',
-        'Topic :: Documentation :: Sphinx',
-        'License :: OSI Approved :: BSD License',
-        'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5'
-        ]
-
-)
+          'Development Status :: 5 - Production/Stable',
+          'Topic :: Text Processing :: Markup',
+          'Intended Audience :: Science/Research',
+          'Topic :: Scientific/Engineering',
+          'Topic :: Software Development :: Documentation',
+          'Topic :: Documentation :: Sphinx',
+          'License :: OSI Approved :: BSD License',
+          'Programming Language :: Python :: 3 :: Only',
+          'Programming Language :: Python :: 3.4',
+          'Programming Language :: Python :: 3.5'
+      ])
