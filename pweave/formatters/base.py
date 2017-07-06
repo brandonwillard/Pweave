@@ -4,9 +4,8 @@ import base64
 import copy
 from nbconvert import filters
 
-# Pweave output formatters
 class PwebFormatter(object):
-    """Base class for all not-notebook formatters"""
+    """Base class for all non-notebook formatters"""
 
     def __init__(self, executed, *args,
                  kernel="python3", language="python",
@@ -35,10 +34,9 @@ class PwebFormatter(object):
         self.initformat()
         self._fillformatdict()
 
-
     def initformat(self):
-        pass
 
+        pass
 
     def format(self):
         self.formatted = []
@@ -99,7 +97,6 @@ class PwebFormatter(object):
 
         #print(figs)
         return figs
-
 
     def format_termchunk(self, chunk):
         if chunk['echo'] and chunk['results'] != 'hidden':
@@ -179,7 +176,6 @@ class PwebFormatter(object):
             result += self.fix_linefeeds(text)
 
         return(result)
-
 
     def fix_linefeeds(self, text):
         """Add empty line to start and end of string if it
@@ -309,7 +305,6 @@ class PwebFormatter(object):
         include_name = os.path.join(include_dir, prefix + ext)
 
         return save_name, include_name
-
 
     def getFigDirectory(self):
         return os.path.join(self.wd, self.figdir)

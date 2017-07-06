@@ -49,9 +49,6 @@ class PwebProcessorBase(object):
 
         self.open()
 
-        # Create directory for figures
-        self.ensureDirectoryExists(self.getFigDirectory())
-
         self.executed = []
 
         # Term chunk returns a list of dicts, this flattens the results
@@ -69,7 +66,8 @@ class PwebProcessorBase(object):
     def open(self):
         if self.caching:
             self.cachedir = os.path.join(self.cwd, rcParams["cachedir"])
-            self.ensureDirectoryExists(self.cachedir)
+            os.makedirs(self.cachedir, exist_ok=True)
+
             self.db_filename = self.cachedir + "/" + self.basename + ".db"
             self.db = shelve.open(self.db_filename)
 
@@ -79,10 +77,6 @@ class PwebProcessorBase(object):
         if self.db:
             self.db.close()
             logger.info("Closed db {}".format(self.db_filename))
-
-    def ensureDirectoryExists(self, figdir):
-        if not os.path.isdir(figdir):
-            os.mkdir(figdir)
 
     def getresults(self):
         #flattened = list(itertools.chain.from_iterable(self.executed))
@@ -177,125 +171,148 @@ class PwebProcessorBase(object):
                 return chunk
 
             self.pre_run_hook(chunk)
-            self._eval_chunk_code(chunk)
+
+            new_chunk = self._eval_chunk_code(chunk)
 
             # After executing the code save the figure
-            if chunk['options']['fig']:
-                chunk['figure'] = self.savefigs(chunk)
+            if new_chunk['options']['fig']:
+                self.save_figs(new_chunk)
 
-            if chunk_src is not None:
-                # The code from current chunk for display
-                chunk['source'] = chunk_src
+        self.post_run_hook(new_chunk)
 
-        self.post_run_hook(chunk)
+        return new_chunk
 
-        return chunk
+    def _eval_cached(self, chunk, **kwargs):
+        r""" Check the cache for a chunk entry and evaluate when missing.
 
-    def _code_repr(self, code_str):
-        r""" Produces an object for a given string of code to be used for
-        detecting valid changes in a chunk's source.
-
-        For instance, if a chunk contains Python code, we can do better than
-        simply comparing the raw code strings by using their reduced AST forms.
-        .. code:
-
-            import ast
-            code_repr = ast.parse(code_str)
-            # or
-            code_repr = ast.dump(ast.parse(code_str))
-
-        Ideally, this representation takes less effort to evaluate and compare than
-        it does to simply compute evaluate a chunk.
-
-        Parameters
-        ==========
-        code_str: string
-            The source as it appears in the chunk.
-
-        Returns
-        =======
-        An object representing a reduced form of the chunk's
-        source better suited for later comparisons.
-        """
-        return code_str
-
-    def _get_cached(self, chunk, cache_params=None, **kernel_kwds):
-        r""" Check the cache for a chunk entry, compare the code in each,
-        invalidate all chunks that follow when not equal.
-
-        TODO: Determine, and use, dependency between chunks; only
-        invalidate dependent chunks.
-
-        TODO: Consider using a binary diff (e.g.
-        https://pypi.python.org/pypi/bsdiff4/1.1.4).
-
-        TODO: Consider chunk dependencies.
+        XXX: This method adds a key to the chunk ('from_cache': bool).
 
         Parameters
         ==========
         chunk: dict
             The chunk to be processed.
-        cache_params: object
-            Set of parameters to be used by more specific processors.
 
         Returns
         =======
         The evaluated chunk results.
         """
 
-        chunk_num = chunk['number']
-        cached_chunk = self.db.get(str(chunk_num), None)
+        cached_chunk = self._get_cached(chunk)
 
-        if cached_chunk is None or\
-                not self._chunks_equal(chunk, cached_chunk):
+        c_ = self._chunk_hash(chunk)
+        cc_ = self._chunk_hash(cached_chunk)
 
-            logger.info("Cache miss on chunk {}".format(chunk_num))
-            outputs = self._kernel_eval(chunk['source'], **kernel_kwds)
+        if c_ != cc_:
 
-            # Create a "pseudo-chunk" that contains fields we might want
-            # to compare.
-            # TODO: Make the comparison keys a class field?
-            cached_chunk = {'source': chunk['source'],
-                            'outputs': outputs}
+            outputs = self._kernel_eval(chunk['source'], **kwargs)
 
-            self.db[str(chunk_num)] = cached_chunk
+            # TODO: Method for determining what's to be cached.
+            self._put_cached(chunk, outputs)
 
-            # Naive document order-based invalidation.
-            for k in self.db.keys():
-                if int(k) > chunk_num:
-                    self.db.pop(k, None)
+            logger.info("Cache miss on chunk {}".format(chunk['number']))
+            chunk['from_cache'] = False
 
         else:
-            logger.info("Cache hit on chunk {}".format(chunk_num))
             outputs = cached_chunk['outputs']
+
+            logger.info("Cache hit on chunk {}".format(chunk['number']))
+            chunk['from_cache'] = True
 
         return outputs
 
-    def _chunks_equal(self, chunk, cached_chunk):
-        r""" Determine if two chunks are equal.
-
-        Use this method to compute special hashing information (and
-        add it to the cache),  determine dependencies between chunks and
-        invalidate other chunks in the cache, etc.
+    def _get_cached(self, chunk, **kwargs):
+        r""" Get a chunk in the cache.
 
         Parameters
         ==========
         chunk: dict
-            The chunk for which we want to obtain cached results, or
-            compute and add them to the cache.
-        cached_chunk: dict
-            A cached chunk that corresponds to the current chunk in document
-            position order.
+            The chunk we're caching.
 
         Returns
         =======
-        A bool indicating a cache hit (`True`) or miss (`False`)
+        Cached chunk, if found, or `None`.
         """
-        compare_keys = set(cached_chunk.keys())
-        compare_keys.remove('outputs')
-        chunk_ = {p_: chunk[p_] for p_ in compare_keys}
-        cached_chunk_ = {p_: cached_chunk[p_] for p_ in compare_keys}
-        return dill.dumps(chunk_) == dill.dumps(cached_chunk_)
+
+        chunk_key = str(chunk['number'])
+        cached_chunk = self.db.get(chunk_key, None)
+
+        return cached_chunk
+
+    def _put_cached(self, chunk, outputs, **kwargs):
+        r""" Put evaluated chunk into the cache.
+
+        TODO: The Jupyter client API has an `inspect` function that could be
+        used to inquire about variables by name for an arbitrary kernel.
+        Consider using this as a general means of specifying a list of variables
+        in the `cache` chunk option that can be assigned "keyed against".  One
+        might be able to implement a slightly less naive version of chunk
+        dependency using the `found` value in the results of `inspect`.
+
+        Parameters
+        ==========
+        chunk: dict
+            The chunk we're caching.
+        outputs: list
+            The outputs computed for the chunk.
+        """
+
+        chunk = chunk.copy()
+        chunk['outputs'] = outputs
+
+        chunk_key = str(chunk['number'])
+        self.db[chunk_key] = chunk
+
+        #
+        # Naive document order-based invalidation.
+        #
+        # TODO: This might need to be improved to handle inline chunks that
+        # only print (even though one can't really be certain there are
+        # no side effects).
+        chunk_num = chunk['number']
+        for k in self.db.keys():
+            if int(k) > chunk_num:
+                self.db.pop(k, None)
+
+
+    def _chunk_hash(self, chunk,
+                    hash_keys=('source'),
+                    **kwargs):
+        r""" Produce the values by which cached chunks are compared.
+
+        Use this method to compute determine which things are compared
+        and how.
+
+        TODO: Would be so much better to have chunk objects that implement their
+        own hash and/or `__eq__` methods.
+        XXX TODO: Some keys that affect `outputs` are not included (e.g.
+        `options` relating to figures, terminal output, wrapping, etc.)  Logic
+        should be added to account for those.
+
+        Parameters
+        ==========
+        chunk: dict
+            The chunk for which we want a value with which
+            to test equality.
+        hash_keys: dict
+            The keys (existing in `chunk`) used to produce the
+            comparison object with the default implementation
+            (i.e. `dill.dumps`).
+
+        Returns
+        =======
+        Some object that implements `__eq__`; presumably a string, though.
+        """
+        if not isinstance(chunk, dict):
+            return None
+
+        res = chunk.get('cache_hash', None)
+
+        if res is None:
+            chunk_ = {p_: chunk.get(p_, None) for p_ in hash_keys}
+            res = dill.dumps(chunk_)
+            chunk['cache_hash'] = res
+
+        return res
 
     def _eval_chunk_code(self, chunk):
         """ Evaluates chunks, generates appropriate output and creates
@@ -305,86 +322,42 @@ class PwebProcessorBase(object):
         =======
         A list of evaluated chunks.
         """
+
         # Handle some legacy chunk parameters.
         cache_params = chunk['options'].get('cache', self.caching)
         cache_chunk = cache_params and self.caching
 
-        chunks = []
-        if cache_chunk:
-            eval_results = self._get_cached(chunk,
-                                            cache_params=cache_params)
-        else:
-            eval_results = self._kernel_eval(chunk['source'])
-
         new_chunk = chunk.copy()
-        new_chunk["source"] = chunk['source'].rstrip()
+
+        if chunk.get('inline', False) and\
+                chunk['options'].get('print', False):
+            new_chunk['source'] = self._print_cmd(new_chunk['source'])
+
+        if cache_chunk:
+            eval_results = self._eval_cached(new_chunk)
+        else:
+            eval_results = self._kernel_eval(new_chunk['source'])
+
+        # TODO: Should we really strip newlines here?
+        new_chunk["source"] = new_chunk['source'].rstrip()
         new_chunk["outputs"] = eval_results
-        chunks.append(new_chunk)
 
-        # source = ""
-        # for eval_res, src_res in eval_results:
-        #     if len(eval_res) == 0:
-        #         source += src_res
-        #     else:
-        #         new_chunk = chunk.copy()
-        #         new_chunk["source"] = source + src_res.rstrip()
-        #         new_chunk["outputs"] = eval_res
-        #         chunks.append(new_chunk)
-        #         source = ""
+        return new_chunk
 
-        return chunks
-
-    def _save_chunk_state(self, chunk, chunk_data):
-        r""" Save the interpreter/engine/kernel state corresponding to a new/updated chunk.
-
-        This method helps in the process of re-producing an engine's state--not just
-        output/results--on a per-chunk basis.  The state generally consist of
-        global and local environments (e.g. variables, loaded libraries, etc.)
+    def _print_cmd(self, src):
+        r""" Command used to [pretty] print the results of a line of source.
 
         Parameters
         ==========
-        chunk: dict
-            The chunk to save.
-
-        chunk_data: dict
-            The processed chunk data.
+        src: string
+            The source to print.
 
         Returns
         =======
-
+        A string representing a command that prints the results of the given
+        source string.
         """
-
-        # self.session_file = getattr(self, 'session_file',
-        #                             'chunk-{}'.format(chunk_id))
-        # chunk_data['session_filename'] = self.session_file
-        # self.loadstring("""
-        # import dill; session_pickler = dill.dump_session({})
-        # """.format(self.session_file))
-        pass
-
-    def _load_chunk_state(self, chunk, chunk_data):
-        r""" Load the interpreter/engine/kernel state corresponding to a cached chunk.
-
-        This method serves to re-produce an engine's state--not just
-        output/results--on a per-chunk basis.  The state generally consist of
-        global and local environments (e.g. variables, loaded libraries, etc.)
-
-        Parameters
-        ==========
-        chunk: dict
-            The chunk to save.
-
-        chunk_data: dict
-            The processed chunk data.
-
-        Returns
-        =======
-        """
-
-        # self.loadstring("""
-        # import dill; session_unpickler = dill.load_session({})
-        # """.format(chunk_data['session_filename']))
-        pass
+        return src
 
     def post_run_hook(self, chunk):
         pass
@@ -392,14 +365,33 @@ class PwebProcessorBase(object):
     def pre_run_hook(self, chunk):
         pass
 
-    def init_matplotlib(self):
-        pass
+    def save_figs(self, chunk):
+        r""" Save the evaluated image data and put the resulting filenames in
+        the chunk metadata.
 
-    def savefigs(self, chunk):
-        pass
+        XXX: This changes chunk state.
 
-    def getFigDirectory(self):
-        return os.path.join(self.outdir, self.figdir)
+        Parameters
+        ==========
+        chunk: dict
+            The chunk with image data.
+
+        Returns
+        =======
+        Boolean indicating whether or not image data was found and processed.
+        """
+
+        # TODO: This should probably be in a "formatter".
+        # fig_entries = filter(lambda x: x.get('output_type', None) == 'display_data',
+        #                      chunk['outputs'])
+        # os.makedirs(self.figdir, exist_ok=True)
+        # found = False
+        # for fig_data in fig_entries:
+        #     fig_fname = ...
+        #     fig_data['metadata']['filename'] = fig_fname
+        #     found = True
+        # return found
+        pass
 
     def load_shell(self, chunk):
         pass

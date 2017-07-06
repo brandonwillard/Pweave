@@ -87,25 +87,16 @@ def test_cache_state():
         x = 0
         @
         <<chunk1, cache=False>>=
-        print("blah is {}".format(x))
+        print("x is {}".format(x))
         @
         A value <%=x%>
-        <<chunk2, cache=True>>=
 
-        def blah(x_):
-            z = 1 + x_
-
-
-            print("z={}".format(z))
-
-            return z
-
-        x = 1
-
-        blah(x)
-
+        <<chunk2, fig=True, cache=True>>=
+        import matplotlib.pylab as plt
+        plt.plot(range(5), range(5))
+        plt.show()
         @
-        Another value <%=x%>
+
     \end{document}
     """
 
@@ -120,23 +111,90 @@ def test_cache_state():
     parser.parse()
     parsed = parser.parsed
 
-    processor_type = pweave.processors.base.PwebProcessorBase
+    # processor_type = pweave.processors.base.PwebProcessorBase
     processor_type = pweave.processors.jupyter.JupyterProcessor
     processor = processor_type(parsed, 'python', source_file, True, tmp_dir,
                                tmp_dir)
 
-    # processor.db.dict()
+    # First run, no cache.
+    processor.run()
+    # %debug --breakpoint ./pweave/processors/base.py:318 processor.run()
 
+    evald_code_chunks = list(filter(lambda x: x.get('type', None) == 'code',
+                                    processor.executed))
+
+    assert not evald_code_chunks[0]['from_cache']
+    assert not evald_code_chunks[1].get('from_cache', None)
+
+    assert not evald_code_chunks[2]['from_cache']
+    assert evald_code_chunks[2]['inline']
+
+    # TODO: Test for IPythonProcessor
+    # Make sure it wrapped with `print`
+    # assert evald_code_chunks[2]['source'] == 'print(x)'
+
+    assert evald_code_chunks[2]['outputs'][0]['data']['text/plain'] == '0'
+    assert evald_code_chunks[3]['outputs'][1]['output_type'] == 'display_data'
+
+    # This one should use the cache.
     processor.run()
 
-    evald_code_chunks = list(filter(lambda x: x.get('type', None) == 'code', processor.parsed))
-    evald_doc_chunks = list(filter(lambda x: x.get('type', None) == 'doc', processor.parsed))
+    cached_code_chunks = list(filter(lambda x: x.get('type', None) == 'code',
+                                     processor.executed))
 
-    # import ast
-    # import tokenize
-    # from io import StringIO
-    # tks = list(tokenize.generate_tokens(StringIO("  x = 1\ny=1").readline))
-    # tks[0]
+    assert cached_code_chunks[0]['from_cache']
+    # The output from this chunk should be an exception, since its source depends on
+    # values that weren't re-introduced to the environment (they were in the
+    # preceding chunk that was reloaded from the cache).
+    #
+    # We could consider re-running preceding chunks in this situation, but
+    # control might be better left to the user.
+    assert not cached_code_chunks[1].get('from_cache', None)
+
+    assert cached_code_chunks[2]['from_cache']
+    assert cached_code_chunks[2]['inline']
+    assert cached_code_chunks[2]['outputs'][0]['data']['text/plain'] == '0'
+
+    assert cached_code_chunks[3]['from_cache']
+    assert evald_code_chunks[3]['outputs'][1]['output_type'] == 'display_data'
+
+def scratch_shelve():
+
+    # from functools import partial
+    # ip = get_ipython()
+    # processor.kc.execute_interactive("x=1\nx\nz=1\nz",
+    #                                  output_hook=partial(
+    #                                      processor.kc._output_hook_kernel,
+    #                                      ip.display_pub.session,
+    #                                      ip.display_pub.pub_socket,
+    #                                      ip.display_pub.parent_header)
+    #                                  # processor.kc._output_hook_kernel
+    #                                  # processor.kc._output_hook_default
+    #                                  # lambda x: print(x)
+    #                                  )
+
+    import shelve
+    import dill
+    from collections import OrderedDict
+
+    # import tempfile
+    # tmp_dir = tempfile.mkdtemp()
+    # cache_dir = os.path.join(tmp_dir, 'cache')
+
+    # shutil.rmtree(cache_dir, ignore_errors=True)
+
+    # XXX: Hackish replacement
+    shelve.Pickler = dill.Pickler
+    shelve.Unpickler = dill.Unpickler
+
+    s_ = shelve.open(os.path.join('/tmp', 'test_shelf.db'))
+    # s_.cache = OrderedDict()
+
+    obj_ = {1: 'hi', 2: [4, 5]}
+    s_['1'] = obj_
+
+    s_.get('1')
+    s_.close()
 
 
 def assertSameContent(REF, outfile):
