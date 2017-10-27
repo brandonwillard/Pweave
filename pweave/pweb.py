@@ -27,8 +27,8 @@ class Pweb(object):
                      type in Jupyter notebooks
     """
 
-    def __init__(self, source, doctype=None, *args, informat=None, kernel="python3",
-                 output=None, figdir='figures', mimetype=None, kernel_args={}):
+    def __init__(self, source, *args, doctype=None, informat=None, kernel="python3",
+                 output=None, figdir='figures', mimetype=None, kernel_args={}, **kwargs):
         self.source = source
         name, ext = os.path.splitext(os.path.basename(source))
         self.basename = name
@@ -106,7 +106,7 @@ class Pweb(object):
         if string is None:
             self.reader = Reader(file=self.source)
         else:
-            self.reader = self.Reader(string=string)
+            self.reader = Reader(string=string)
             self.source = basename  # non-trivial implications possible
         self.reader.parse()
         self.parsed = self.reader.getparsed()
@@ -122,7 +122,7 @@ class Pweb(object):
                          self.documentationmode,
                          self.figdir,
                          self.wd,
-                         *self.kernel_args
+                         **self.kernel_args
                          )
         proc.run()
         self.executed = proc.getresults()

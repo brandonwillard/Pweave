@@ -19,8 +19,7 @@ class JupyterProcessor(PwebProcessorBase):
 
     def __init__(self, parsed, kernel, source, mode,
                  figdir, outdir, embed_kernel=None):
-        super(JupyterProcessor, self).__init__(parsed, kernel, source, mode,
-                                               figdir, outdir)
+        super(JupyterProcessor, self).__init__(parsed, source, mode, figdir, outdir)
 
         self.extra_arguments = None
         self.timeout = -1
@@ -160,7 +159,7 @@ class IPythonProcessor(JupyterProcessor):
     def __init__(self, *args, **kwargs):
         kernel = args[1]
 
-        embed = kwargs.pop('embed_kernel')
+        embed = kwargs.pop('embed_kernel', None)
         if embed is None and kernel == "python3":
             embed = True
         else:
