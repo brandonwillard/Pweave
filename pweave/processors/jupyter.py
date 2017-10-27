@@ -18,9 +18,9 @@ class JupyterProcessor(PwebProcessorBase):
     """Generic Jupyter processor, should work with any kernel"""
 
     def __init__(self, parsed, kernel, source, mode,
-                       figdir, outdir, embed_kernel=False):
+                 figdir, outdir, embed_kernel=None):
         super(JupyterProcessor, self).__init__(parsed, kernel, source, mode,
-                       figdir, outdir)
+                                               figdir, outdir)
 
         self.extra_arguments = None
         self.timeout = -1
@@ -37,7 +37,8 @@ class JupyterProcessor(PwebProcessorBase):
         try:
             kc.wait_for_ready()
         except RuntimeError:
-            print("Timeout from starting kernel\nTry restarting python session and running weave again")
+            print(
+                "Timeout from starting kernel\nTry restarting python session and running weave again")
             kc.stop_channels()
             km.shutdown_kernel()
             raise
@@ -46,11 +47,9 @@ class JupyterProcessor(PwebProcessorBase):
         self.kc = kc
         self.kc.allow_stdin = False
 
-
     def close(self):
         self.kc.stop_channels()
         self.km.shutdown_kernel()
-
 
     def run_cell(self, src):
         cell = {}
@@ -84,7 +83,6 @@ class JupyterProcessor(PwebProcessorBase):
 
         outs = []
 
-
         while True:
             try:
                 # We've already waited for execute_reply, so all output
@@ -94,10 +92,11 @@ class JupyterProcessor(PwebProcessorBase):
                 # finishes, we won't actually have to wait this long, anyway.
                 msg = self.kc.iopub_channel.get_msg(block=True, timeout=4)
             except Empty:
-                print("Timeout waiting for IOPub output\nTry restarting python session and running weave again")
+                print(
+                    "Timeout waiting for IOPub output\nTry restarting python session and running weave again")
                 raise RuntimeError("Timeout waiting for IOPub output")
 
-            #stdout from InProcessKernelManager has no parent_header
+            # stdout from InProcessKernelManager has no parent_header
             if msg['parent_header'].get('msg_id') != msg_id and msg['msg_type'] != "stream":
                 continue
 
@@ -133,12 +132,12 @@ class JupyterProcessor(PwebProcessorBase):
     def loadstring(self, code_str, **kwargs):
         return self.run_cell(code_str)
 
-    #Yes same format for compatibility even if term is not implemented
+    # Yes same format for compatibility even if term is not implemented
     def loadterm(self, code_str, **kwargs):
         return((sources, self.run_cell(code_str)))
 
-    #TODO add support for "rich" output
-    #Requires storing the results for formatter
+    # TODO add support for "rich" output
+    # Requires storing the results for formatter
     def load_inline_string(self, code_string):
         from nbconvert import filters
         outputs = self.loadstring(code_string)
@@ -158,15 +157,17 @@ class JupyterProcessor(PwebProcessorBase):
 class IPythonProcessor(JupyterProcessor):
     """Contains IPython specific functions"""
 
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         kernel = args[1]
 
-        if kernel == "python3":
+        embed = kwargs.pop('embed_kernel')
+        if embed is None and kernel == "python3":
             embed = True
         else:
             embed = False
 
-        super(IPythonProcessor, self).__init__(*args, embed_kernel=embed)
+        super(IPythonProcessor, self).__init__(*args, **kwargs, embed_kernel=embed)
+
         if config.rcParams["usematplotlib"]:
             self.init_matplotlib()
 
@@ -174,7 +175,8 @@ class IPythonProcessor(JupyterProcessor):
         self.loadstring(subsnippets.init_matplotlib)
 
     def pre_run_hook(self, chunk):
-        f_size = """matplotlib.rcParams.update({"figure.figsize" : (%i, %i)})""" % chunk["f_size"]
+        f_size = """matplotlib.rcParams.update({"figure.figsize" : (%i, %i)})""" % chunk[
+            "f_size"]
         f_dpi = """matplotlib.rcParams.update({"figure.dpi" : %i})""" % chunk["dpi"]
         self.loadstring("\n".join([f_size, f_dpi]))
 
@@ -191,11 +193,10 @@ class IPythonProcessor(JupyterProcessor):
                 code_str = splitter.source
                 sources.append(code_str)
                 out = self.loadstring(code_str)
-                #print(out)
+                # print(out)
                 outputs.append(out)
                 splitter.reset()
                 splitter.push_line(line)
-
 
         if splitter.source != "":
             code_str = splitter.source

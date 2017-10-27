@@ -1,24 +1,31 @@
-# Processors that execute code from code chunks
+"""
+Processors that execute code from code chunks
+"""
+
 import sys
 import re
 import os
 import io
 import copy
-from ..config import *
 import pickle
+
+from ..config import rcParams
+
 
 class PwebProcessorBase(object):
     """Processors run code from parsed Pweave documents. This is an abstract base
     class for specific implementations"""
 
-    def __init__(self, parsed, kernel, source, docmode,
-                       figdir, outdir):
+    def __init__(self, parsed, source, docmode, figdir, outdir,
+                 *args, **kwargs):
         self.parsed = parsed
         self.source = source
         self.documentationmode = docmode
         self.figdir = figdir
         self.outdir = outdir
         self.executed = []
+        self.isexecuted = False
+        self._oldresults = None
 
         self.cwd = os.path.dirname(os.path.abspath(source))
         self.basename = os.path.basename(os.path.abspath(source)).split(".")[0]
@@ -49,7 +56,6 @@ class PwebProcessorBase(object):
             else:
                 self.executed.append(res)
 
-
         self.isexecuted = True
         if rcParams["storeresults"]:
             self.store(self.executed)
@@ -63,7 +69,7 @@ class PwebProcessorBase(object):
             os.makedirs(figdir)
 
     def getresults(self):
-        #flattened = list(itertools.chain.from_iterable(self.executed))
+        # flattened = list(itertools.chain.from_iterable(self.executed))
         return copy.deepcopy(self.executed)
 
     def store(self, data):
@@ -72,9 +78,8 @@ class PwebProcessorBase(object):
         self.ensureDirectoryExists(cachedir)
 
         name = cachedir + "/" + self.basename + ".pkl"
-        f = open(name, 'wb')
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
-        f.close()
+        with open(name, 'wb') as f:
+            pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 
     def restore(self):
         """Restore results from cache"""
@@ -82,12 +87,11 @@ class PwebProcessorBase(object):
         name = cachedir + "/" + self.basename + ".pkl"
 
         if os.path.exists(name):
-            f = open(name, 'rb')
-            self._oldresults = pickle.load(f)
-            f.close()
+            with open(name, 'rb') as f:
+                self._oldresults = pickle.load(f)
             return True
-        else:
-            return False
+
+        return False
 
     def _runcode(self, chunk):
         """Execute code from a code chunk based on options"""
@@ -109,12 +113,15 @@ class PwebProcessorBase(object):
         if 'source' in chunk:
             source = chunk["source"]
             if os.path.isfile(source):
-                chunk["content"] = "\n" + io.open(source, "r", encoding='utf-8').read().rstrip() + "\n" + chunk[
-                    'content']
+                with io.open(source, "r", encoding='utf-8') as sfile:
+                    chunk["content"] = "\n{}\n{}".format(
+                        sfile.read().rstrip(), chunk['content'])
             else:
-                chunk_text = chunk["content"]  # Get the text from chunk
+                # Get the text from chunk
+                chunk_text = chunk["content"]
+                # Get the module source using inspect
                 module_text = self.loadstring(
-                    "import inspect\nprint(inspect.getsource(%s))" % source)  # Get the module source using inspect
+                    "import inspect\nprint(inspect.getsource(%s))" % source)
                 chunk["content"] = module_text[0]["text"].rstrip()
                 if chunk_text.strip() != "":
                     chunk["content"] += "\n" + chunk_text
@@ -123,9 +130,9 @@ class PwebProcessorBase(object):
             chunk['content'] = self.loadinline(chunk['content'])
             return chunk
 
-
         if chunk['type'] == 'code':
-            sys.stdout.write("Processing chunk %(number)s named %(name)s from line %(start_line)s\n" % chunk)
+            sys.stdout.write(
+                "Processing chunk %(number)s named %(name)s from line %(start_line)s\n" % chunk)
 
             old_content = None
             if not chunk["complete"]:
@@ -134,7 +141,8 @@ class PwebProcessorBase(object):
                 return chunk
             elif self.pending_code != "":
                 old_content = chunk["content"]
-                chunk["content"] = self.pending_code + old_content  # Code from all pending chunks for running the code
+                # Code from all pending chunks for running the code
+                chunk["content"] = self.pending_code + old_content
                 self.pending_code = ""
 
             if not chunk['evaluate']:
@@ -159,26 +167,26 @@ class PwebProcessorBase(object):
                         new_chunk["result"] = results[i]
                         chunks.append(new_chunk)
 
-                #Deal with not output, #73
+                # Deal with not output, #73
                 if len(content) > 0:
                     new_chunk = chunk.copy()
                     new_chunk["content"] = content
                     new_chunk["result"] = ""
                     chunks.append(new_chunk)
 
-                return(chunks)
+                return chunks
             else:
                 chunk['result'] = self.loadstring(chunk['content'], chunk=chunk)
 
-        #After executing the code save the figure
+        # After executing the code save the figure
         if chunk['fig']:
             chunk['figure'] = self.savefigs(chunk)
 
         if old_content is not None:
-            chunk['content'] = old_content  # The code from current chunk for display
+            # The code from current chunk for display
+            chunk['content'] = old_content
 
         self.post_run_hook(chunk)
-
 
         return chunk
 
@@ -213,7 +221,8 @@ class PwebProcessorBase(object):
             if chunk['type'] != "code":
                 executed.append(self._hideinline(chunk.copy()))
             else:
-                chunks = [c for c in self._oldresults if c["number"] == i and c["type"] == "code"]
+                chunks = [c for c in self._oldresults
+                          if c["number"] == i and c["type"] == "code"]
                 executed = executed + chunks
 
         self.executed = executed
@@ -265,9 +274,14 @@ class PwebProcessorBase(object):
         chunk['content'] = ''.join(splitted)
         return chunk
 
+
 class ProtectStdStreams(object):
     def __init__(self, obj=None):
         self.__obj = obj
+        self.__stdout = None
+        self.__stderr = None
+        self.__stdin = None
+        self.__displayhook = None
 
     def __enter__(self):
         self.__stdout = sys.stdout

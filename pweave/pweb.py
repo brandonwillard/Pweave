@@ -27,8 +27,8 @@ class Pweb(object):
                      type in Jupyter notebooks
     """
 
-    def __init__(self, source, doctype = None, *, informat = None, kernel = "python3",
-                 output = None, figdir = 'figures', mimetype = None):
+    def __init__(self, source, doctype=None, *args, informat=None, kernel="python3",
+                 output=None, figdir='figures', mimetype=None, kernel_args={}):
         self.source = source
         name, ext = os.path.splitext(os.path.basename(source))
         self.basename = name
@@ -36,7 +36,6 @@ class Pweb(object):
         self.figdir = figdir
         self.doctype = doctype
         self.sink = None
-        self.kernel = None
         self.language = None
 
         if mimetype is None:
@@ -44,18 +43,17 @@ class Pweb(object):
         else:
             self.mimetype = MimeTypes.get_mimetype(mimetype)
 
-
-        if self.source != None:
+        if self.source is not None:
             name, file_ext = os.path.splitext(self.source)
             self.file_ext = file_ext.lower()
         else:
             self.file_ext = None
 
         self.output = output
-        self.setkernel(kernel)
+        self.setkernel(kernel, kernel_args)
         self._setwd()
 
-        #Init variables not set using the constructor
+        # Init variables not set using the constructor
         #: Use documentation mode
         self.documentationmode = False
         self.parsed = None
@@ -66,7 +64,7 @@ class Pweb(object):
         self.theme = "skeleton"
 
         self.setformat(doctype)
-        self.read(reader = informat)
+        self.read(reader=informat)
 
     def _setwd(self):
         if self.output is not None:
@@ -76,9 +74,11 @@ class Pweb(object):
         else:
             self.wd = "."
 
-    def setkernel(self, kernel):
+    def setkernel(self, kernel, kernel_args={}):
         """Set the kernel for jupyter_client"""
         self.kernel = kernel
+        self.kernel_args = kernel_args
+
         if kernel is not None:
             self.language = kernelspec.get_kernel_spec(kernel).language
 
@@ -90,7 +90,7 @@ class Pweb(object):
         """Update existing format, See: http://mpastell.com/pweave/customizing.html"""
         self.formatter.formatdict.update(dict)
 
-    def read(self, string=None, basename="string_input", reader = None):
+    def read(self, string=None, basename="string_input", reader=None):
         """
         Parse document
 
@@ -103,18 +103,15 @@ class Pweb(object):
         else:
             Reader = reader
 
-
         if string is None:
             self.reader = Reader(file=self.source)
         else:
             self.reader = self.Reader(string=string)
-            self.source = basename # non-trivial implications possible
+            self.source = basename  # non-trivial implications possible
         self.reader.parse()
         self.parsed = self.reader.getparsed()
 
-
-
-    def run(self, Processor = None):
+    def run(self, Processor=None):
         """Execute code in the document"""
         if Processor is None:
             Processor = PwebProcessors.getprocessor(self.kernel)
@@ -124,12 +121,13 @@ class Pweb(object):
                          self.source,
                          self.documentationmode,
                          self.figdir,
-                         self.wd
-                        )
+                         self.wd,
+                         *self.kernel_args
+                         )
         proc.run()
         self.executed = proc.getresults()
 
-    def setformat(self, doctype = None, Formatter = None):
+    def setformat(self, doctype=None, Formatter=None):
         """
         Set formatter by name or class. You can pass either
 
@@ -142,19 +140,19 @@ class Pweb(object):
         elif Formatter is not None:
             Formatter = Formatter
         elif self.doctype is None:
-            Formatter = PwebFormats.getFormatter(PwebFormats.guessFromFilename(self.source))
+            Formatter = PwebFormats.getFormatter(
+                PwebFormats.guessFromFilename(self.source))
         else:
             Formatter = PwebFormats.getFormatter(self.doctype)
 
         self.formatter = Formatter([],
-                                   kernel = self.kernel,
-                                   language = self.language,
-                                   mimetype = self.mimetype.type,
-                                   source = self.source,
-                                   theme = self.theme,
-                                   figdir = self.figdir,
-                                   wd = self.wd)
-
+                                   kernel=self.kernel,
+                                   language=self.language,
+                                   mimetype=self.mimetype.type,
+                                   source=self.source,
+                                   theme=self.theme,
+                                   figdir=self.figdir,
+                                   wd=self.wd)
 
     def format(self):
         """Format executed code for writing. """
@@ -166,10 +164,12 @@ class Pweb(object):
         if self.output is not None:
             self.sink = self.output
         elif parse.urlparse(self.source).scheme == "":
-            self.sink = os.path.splitext(self.source)[0] + '.' + self.formatter.file_ext
+            self.sink = os.path.splitext(self.source)[
+                0] + '.' + self.formatter.file_ext
         else:
             url_path = parse.urlparse(self.source).path
-            self.sink = os.path.splitext(os.path.basename(url_path))[0] + '.' + self.formatter.file_ext
+            self.sink = os.path.splitext(os.path.basename(url_path))[
+                0] + '.' + self.formatter.file_ext
 
     def write(self):
         """Write formatted code to file"""
@@ -177,7 +177,7 @@ class Pweb(object):
 
         self._writeToSink(self.formatted.replace("\r", ""))
         self._print('Weaved {src} to {dst}\n'.format(src=self.source,
-                                                        dst=self.sink))
+                                                     dst=self.sink))
 
     def _print(self, msg):
         sys.stdout.write(msg)
@@ -208,4 +208,4 @@ class Pweb(object):
         f.write('\n'.join(code) + "\n")
         f.close()
         print('Tangled code from {src} to {dst}'.format(src=self.source,
-                                                              dst=target))
+                                                        dst=target))
